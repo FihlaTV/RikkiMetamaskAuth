@@ -16,6 +16,12 @@ app.use(
 );
 app.set('view engine', 'ejs');
 app.use(bodyParser.urlencoded({ extended: true }));
+let isLoggedIn = (req, res, next) => {
+    if (req.isAuthenticated()) {
+        return next();
+    }
+    res.redirect('/register');
+};
 
 let UserSchema = new mongoose.Schema({
     email: {
@@ -48,9 +54,28 @@ UserSchema.pre('save', function(next) {
 let User = mongoose.model('User', UserSchema);
 
 app.get('/', (req, res) => {
-    res.render('index');
+    User.findById(req.session.userId).exec(function(error, user) {
+        if (error) {
+            return next(error);
+        } else {
+            if (user === null) {
+                var err = new Error('Not authorized! Go back!');
+                err.status = 400;
+                return res.redirect('/register');
+            } else {
+                return res.redirect('/profile');
+            }
+        }
+    });
+
 });
 
+app.get('/profile', (req,res)=>{
+    res.render('profile');
+})
+app.get('/register', (req, res) => {
+    res.render('register');
+});
 app.post('/register', (req, res, next) => {
     if (req.body.email && req.body.username && req.body.password) {
         var userData = {
@@ -64,14 +89,31 @@ app.post('/register', (req, res, next) => {
                 return next(err);
             } else {
                 req.session.userId = user._id;
-                return res.redirect('/profile');
+                return res.redirect('/');
             }
         });
     }
 });
 
-app.get('/profile', (req, res) => {
-    res.render('profile');
+app.post('/login', (req, res, next) => {
+    UserSchema.statics.authenticate = (email, password, callback) => {
+        User.findOne({ email }).exec((err, user) => {
+            if (err) {
+                return callback(err);
+            } else if (!user) {
+                var err = new Error('User not found.');
+                err.status = 401;
+                return callback(err);
+            }
+            bcrypt.compare(password, user.password, function(err, result) {
+                if (result === true) {
+                    return callback(null, user);
+                } else {
+                    return callback();
+                }
+            });
+        });
+    };
 });
 
 app.listen(process.env.PORT || 4000);
