@@ -1,26 +1,35 @@
 const express = require('express'),
     app = express(),
     bodyParser = require('body-parser'),
-    passport = require('passport'),
     mongoose = require('mongoose'),
-    bcrypt = require('bcrypt');
+    bcrypt = require('bcrypt'),
+    session = require('express-session'),
+    MongoStore = require('connect-mongo')(session);
+
 const url =
     process.env.DATABASEURL || 'mongodb://localhost/RikkiLocalStratergy';
 mongoose.connect(url);
+
+const db = mongoose.connection;
+
 app.use(
-    require('express-session')({
+    session({
         secret: 'Minimlaborumeulaboreexcepteurquisnostrud',
         resave: false,
-        saveUninitialized: false
+        saveUninitialized: false,
+        store: new MongoStore({
+            mongooseConnection: db
+        })
     })
 );
 app.set('view engine', 'ejs');
 app.use(bodyParser.urlencoded({ extended: true }));
 let isLoggedIn = (req, res, next) => {
-    if (req.isAuthenticated()) {
+    if (req.session && req.session.userId) {
         return next();
+    } else {
+        return res.redirect('./register');
     }
-    res.redirect('/register');
 };
 
 let UserSchema = new mongoose.Schema({
@@ -30,7 +39,7 @@ let UserSchema = new mongoose.Schema({
         required: true,
         trim: true
     },
-    username: {
+    eth_address: {
         type: String,
         unique: true,
         required: true,
@@ -41,6 +50,35 @@ let UserSchema = new mongoose.Schema({
         required: true
     }
 });
+UserSchema.statics.authenticate = (email, password, callback) => {
+    User.findOne({ email }).exec((err, user) => {
+        if (err) {
+            return callback(err);
+        } else if (!user) {
+            var err = new Error('User not found.');
+            err.status = 401;
+            return callback(err);
+        }
+        bcrypt.compare(password, user.password, function(err, result) {
+            if (result === true) {
+                return callback(null, user);
+            } else {
+                return callback();
+            }
+        });
+    });
+};
+UserSchema.methods.ethAddressAuthenticate = (eth_address,signature,nonce, callback) => {
+    User.findOne({eth_address}).exec((err, user)=>{
+        if (err) {
+            return callback(err);
+        } else if (!user) {
+            var err = new Error('User not found.');
+            err.status = 401;
+            return callback(err);
+        }
+    })
+}
 UserSchema.pre('save', function(next) {
     var user = this;
     bcrypt.hash(user.password, 10, function(err, hash) {
@@ -67,20 +105,19 @@ app.get('/', (req, res) => {
             }
         }
     });
-
 });
 
-app.get('/profile', (req,res)=>{
+app.get('/profile', isLoggedIn, (req, res) => {
     res.render('profile');
-})
+});
 app.get('/register', (req, res) => {
     res.render('register');
 });
 app.post('/register', (req, res, next) => {
-    if (req.body.email && req.body.username && req.body.password) {
+    if (req.body.email && req.body.password) {
         var userData = {
             email: req.body.email,
-            username: req.body.username,
+            eth_address: req.body.eth_address,
             password: req.body.password
         };
         //use schema.create to insert data into the db
@@ -92,28 +129,37 @@ app.post('/register', (req, res, next) => {
                 return res.redirect('/');
             }
         });
+    } else if (req.body.eth_address) {
+        User.authenticate(req.body.email, req.body.password, function(
+            error,
+            user
+        ) {
+            if (error || !user) {
+                var err = new Error('Wrong email or password.');
+                err.status = 401;
+                return next(err);
+            } else {
+                req.session.userId = user._id;
+                return res.redirect('/profile');
+            }
+        });
+    } else {
+        var err = new Error('All fields required.');
+        err.status = 400;
+        return next(err);
     }
 });
 
-app.post('/login', (req, res, next) => {
-    UserSchema.statics.authenticate = (email, password, callback) => {
-        User.findOne({ email }).exec((err, user) => {
+app.get('/logout', function(req, res, next) {
+    if (req.session) {
+        // delete session object
+        req.session.destroy(function(err) {
             if (err) {
-                return callback(err);
-            } else if (!user) {
-                var err = new Error('User not found.');
-                err.status = 401;
-                return callback(err);
+                return next(err);
+            } else {
+                return res.redirect('/');
             }
-            bcrypt.compare(password, user.password, function(err, result) {
-                if (result === true) {
-                    return callback(null, user);
-                } else {
-                    return callback();
-                }
-            });
         });
-    };
+    }
 });
-
 app.listen(process.env.PORT || 4000);
